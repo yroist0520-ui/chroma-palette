@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>CHROMA · 图片可读色卡</title>
+  <meta name="description" content="上传图片，提取与画面吻合、且能直接用于在图片上写字的可识读色卡。" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d8ff3e' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="atmosphere-grid"></div>
+    <div class="atmosphere-glow"></div>
+    <div class="atmosphere-grain"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="14.31" y1="8" x2="20.05" y2="17.94"/>
+          <line x1="9.69" y1="8" x2="21.17" y2="8"/>
+          <line x1="7.38" y1="12" x2="13.12" y2="2.06"/>
+          <line x1="9.69" y1="16" x2="3.95" y2="6.06"/>
+          <line x1="14.31" y1="16" x2="2.83" y2="16"/>
+          <line x1="16.62" y1="12" x2="10.88" y2="21.94"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <strong>CHROMA</strong>
+        <em>图片可读色卡</em>
+      </span>
+    </div>
+    <div class="topbar-note">
+      <span class="dot" aria-hidden="true"></span>
+      取色于图 · 校验可读 · 直接上字
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- ============ 左：画布舞台 ============ -->
+    <section class="stage-col" aria-label="图片与文字预览">
+      <div class="stage" id="stage">
+        <!-- 空状态：上传区 -->
+        <div class="dropzone" id="dropzone">
+          <span class="dropzone-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </span>
+          <h1 class="dropzone-title">把图片拖进来</h1>
+          <p class="dropzone-sub">支持 JPG / PNG / WEBP · 也可直接 <kbd>⌘V</kbd> 粘贴剪贴板里的图片</p>
+          <div class="dropzone-actions">
+            <button class="btn btn-primary" id="pickBtn" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+              选择图片
+            </button>
+            <button class="btn btn-ghost" id="sampleBtn" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.97a4 4 0 0 0 3.3-1.7l5.46-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.97a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.04a4 4 0 0 1-3.3-1.8l-.36-.45"/></svg>
+              用示例图试试
+            </button>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" hidden />
+        </div>
+
+        <!-- 已载入：图片 + 文字层 -->
+        <div class="frame" id="frame" hidden>
+          <img id="previewImg" alt="已载入的图片" />
+          <div class="text-layer" id="textLayer">
+            <div class="overlay" id="overlay" tabindex="0" role="button" aria-label="拖动可移动文字位置">
+              <span class="overlay-scrim" id="overlayScrim" hidden></span>
+              <span class="overlay-text" id="overlayText">在山与海之间<br />写一行能被读到的字</span>
+            </div>
+          </div>
+          <div class="frame-hint" id="frameHint">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+            拖动文字，检验它在该处的可读性
+          </div>
+        </div>
+      </div>
+
+      <!-- 文字控制条 -->
+      <div class="controls" id="controls" hidden>
+        <label class="field field-grow">
+          <span class="field-label">预览文字</span>
+          <input type="text" id="textInput" value="在山与海之间，写一行能被读到的字" placeholder="输入要写在图片上的文字" />
+        </label>
+        <label class="field">
+          <span class="field-label">字号 <b id="sizeVal">48</b></span>
+          <input type="range" id="sizeRange" min="16" max="120" value="48" />
+        </label>
+        <div class="field field-toggle">
+          <span class="field-label">文字底衬</span>
+          <button class="switch" id="scrimToggle" type="button" role="switch" aria-checked="false">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-text">自动底衬</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 右：色卡面板 ============ -->
+    <aside class="panel-col" aria-label="色卡与可读性">
+      <div class="panel-block readout" id="readout">
+        <div class="readout-main">
+          <span class="readout-label">文字 / 底 对比度</span>
+          <span class="readout-ratio" id="ratioVal">—</span>
+          <span class="badge" id="ratioBadge">待载入图片</span>
+        </div>
+        <div class="readout-pair">
+          <div class="chip">
+            <span class="chip-swatch" id="fgSwatch"></span>
+            <span class="chip-meta"><em>文字色</em><b id="fgHex">—</b></span>
+          </div>
+          <div class="chip">
+            <span class="chip-swatch" id="bgSwatch"></span>
+            <span class="chip-meta"><em>文字下方</em><b id="bgHex">—</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-block">
+        <div class="panel-head">
+          <h2>色卡</h2>
+          <span class="panel-count" id="paletteCount">0 色</span>
+        </div>
+        <div class="palette" id="palette">
+          <div class="palette-empty">
+            <span class="palette-empty-mark" aria-hidden="true"></span>
+            <p>载入图片后，这里会列出从画面中提取的颜色，并标注每一种作为文字时的可读性。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-block panel-tools">
+        <label class="field">
+          <span class="field-label">取色数量 <b id="countVal">6</b></span>
+          <input type="range" id="countRange" min="3" max="10" value="6" disabled />
+        </label>
+        <div class="field field-toggle">
+          <span class="field-label">可读性适配</span>
+          <button class="switch" id="adaptToggle" type="button" role="switch" aria-checked="false" disabled>
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-text">自动提亮 / 压暗到达标</span>
+          </button>
+        </div>
+        <p class="tools-note">适配只调整明度、保留原有色相，因此依旧与画面吻合。</p>
+      </div>
+
+      <div class="panel-block">
+        <div class="panel-head"><h2>导出</h2></div>
+        <div class="export-grid">
+          <button class="btn btn-soft" id="copyHexBtn" type="button" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            复制全部 HEX
+          </button>
+          <button class="btn btn-soft" id="copyCssBtn" type="button" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            复制 CSS 变量
+          </button>
+          <button class="btn btn-soft" id="pngBtn" type="button" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            下载色卡 PNG
+          </button>
+          <button class="btn btn-soft" id="jsonBtn" type="button" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            下载 JSON
+          </button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="color-core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
