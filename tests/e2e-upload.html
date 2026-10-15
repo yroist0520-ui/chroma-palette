@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CHROMA · E2E 上传与拖放测试</title>
+<style>
+  body { font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 20px; background: #f6f7f9; color: #1a1c22; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #666; margin: 0 0 14px; }
+  #summary { font-weight: 700; margin: 10px 0; padding: 10px 14px; border-radius: 8px; background: #fff; border: 1px solid #e2e5ea; }
+  #summary.ok { background: #eafaf0; border-color: #b6e6c8; color: #0a7a3d; }
+  #summary.bad { background: #fdecec; border-color: #f3bcbc; color: #b32b2b; }
+  ol { padding-left: 22px; margin: 8px 0 0; }
+  li { margin: 3px 0; }
+  li.pass::marker { color: #0a7a3d; }
+  li.fail::marker { color: #b32b2b; }
+  .detail { color: #666; font-size: 12px; }
+  iframe { width: 100%; height: 600px; border: 1px solid #e2e5ea; border-radius: 8px; background: #fff; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <h1>CHROMA 端到端测试 · 真实图片上传与拖放</h1>
+  <p class="sub">下方 iframe 加载真实页面 <code>../index.html</code>；测试构造真实 <code>File</code> 对象并派发真实 <code>change</code> / <code>dragenter</code> / <code>dragover</code> / <code>drop</code> 事件。</p>
+  <div id="summary">运行中…</div>
+  <ol id="results"></ol>
+  <iframe id="app" src="../index.html" title="被测试页面"></iframe>
+
+  <script>
+  (function () {
+    'use strict';
+    var iframe = document.getElementById('app');
+    var summaryEl = document.getElementById('summary');
+    var resultsEl = document.getElementById('results');
+    var results = [];
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+    function win() { return iframe.contentWindow; }
+    function doc() { return iframe.contentDocument; }
+    function el(id) { return doc().getElementById(id); }
+    function toastText() { var t = el('toast'); return t ? t.textContent : ''; }
+
+    function waitFor(fn, timeout, step) {
+      timeout = timeout || 4000; step = step || 50;
+      var t0 = Date.now();
+      return new Promise(function (resolve) {
+        (function poll() {
+          var ok = false;
+          try { ok = !!fn(); } catch (e) { ok = false; }
+          if (ok) return resolve(true);
+          if (Date.now() - t0 > timeout) return resolve(false);
+          setTimeout(poll, step);
+        })();
+      });
+    }
+
+    function record(name, pass, detail) {
+      results.push({ name: name, pass: !!pass, detail: detail || '' });
+      var li = document.createElement('li');
+      li.className = pass ? 'pass' : 'fail';
+      li.textContent = (pass ? '✅ ' : '❌ ') + name + (detail ? '  — ' + detail : '');
+      resultsEl.appendChild(li);
+    }
+
+    function hexToRgb(hex) {
+      var h = hex.replace('#', '');
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    }
+    function near(rgb, target, tol) {
+      return rgb.every(function (v, i) { return Math.abs(v - target[i]) <= tol; });
+    }
+
+    /* 用 canvas 生成一张真实图片文件（可指定纯色），走真实 File/Blob 通道 */
+    function makeImageFile(rgb, opts) {
+      opts = opts || {};
+      var w = opts.w || 96, h = opts.h || 96, type = opts.type || 'image/png', name = opts.name || 'test.png';
+      var c = doc().createElement('canvas');
+      c.width = w; c.height = h;
+      var x = c.getContext('2d');
+      x.fillStyle = 'rgb(' + rgb.join(',') + ')';
+      x.fillRect(0, 0, w, h);
+      return new Promise(function (res) {
+        c.toBlob(function (b) { res(new File([b], name, { type: type })); }, type);
+      });
+    }
+    function makeTextFile() { return new File(['hello'], 'note.txt', { type: 'text/plain' }); }
+    function dataTransferWith(file) {
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      return dt;
+    }
+    function fireDrag(target, type, dt) {
+      target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }
+
+    async function run() {
+      var ready = await waitFor(function () { return win() && win().__IPS && doc().readyState === 'complete'; }, 8000);
+      if (!ready) { record('应用就绪', false, '未检测到 window.__IPS 或 iframe 未加载'); return finish(); }
+      await sleep(300);
+
+      /* ① 点击上传：真实 File 走 fileInput 的 change 事件 */
+      try {
+        var green = [46, 125, 50];
+        var f = await makeImageFile(green, { name: 'green.png' });
+        var fi = el('fileInput');
+        fi.files = dataTransferWith(f).files;
+        fi.dispatchEvent(new Event('change', { bubbles: true }));
+        var ok = await waitFor(function () { return win().__IPS.get().palette.length > 0; }, 6000);
+        var st = win().__IPS.get();
+        var p0 = st.palette.length ? hexToRgb(st.palette[0]) : [0, 0, 0];
+        record('① 点击上传（change 事件）→ 读取真实像素',
+          ok && near(p0, green, 32),
+          '主色 ' + (st.palette[0] || '—') + '（期望≈rgb(46,125,50)）');
+        record('①b 上传后进入预览态（dropzone 隐藏 / 更换图片可见）',
+          el('dropzone').hidden === true && el('frame').hidden === false && el('replaceBtn').hidden === false,
+          'imgMeta="' + el('imgMeta').textContent + '"');
+      } catch (e) { record('① 点击上传', false, String(e)); }
+
+      /* ② 拖放上传：真实 DragEvent + dataTransfer.files */
+      try {
+        var f2 = await makeImageFile([250, 250, 250], { name: 'white.png' });
+        var dt = dataTransferWith(f2);
+        var stage = el('stage');
+        fireDrag(stage, 'dragenter', dt);
+        var over = el('dropzone').classList.contains('is-over');
+        fireDrag(stage, 'dragover', dt);
+        fireDrag(stage, 'drop', dt);
+        var cleared = !el('dropzone').classList.contains('is-over');
+        var ok2 = await waitFor(function () {
+          var s = win().__IPS.get(); return s.bgType && s.bgType.type === 'pure-white';
+        }, 6000);
+        var st2 = win().__IPS.get();
+        record('② 拖放上传（dragenter/dragover/drop）→ 分析真实像素',
+          ok2 && over && cleared,
+          'bgType=' + (st2.bgType && st2.bgType.type) + ' · 高亮=' + over + ' · 落点清除=' + cleared);
+        record('②b 纯白图 → 主动设计模式（不伪造提取色）',
+          !!st2.bgType && st2.bgType.type === 'pure-white' && st2.bgType.mode === 'B',
+          'label=' + (st2.bgType && st2.bgType.label));
+      } catch (e) { record('② 拖放上传', false, String(e)); }
+
+      /* ③ 无效类型：change */
+      try {
+        var fi3 = el('fileInput');
+        fi3.files = dataTransferWith(makeTextFile()).files;
+        fi3.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(80);
+        var t3 = toastText();
+        record('③ 上传无效类型（change）→ 明确反馈', t3.indexOf('仅支持') >= 0, 'toast="' + t3 + '"');
+      } catch (e) { record('③ 无效类型 change', false, String(e)); }
+
+      /* ④ 无效类型：drop */
+      try {
+        fireDrag(el('stage'), 'drop', dataTransferWith(makeTextFile()));
+        await sleep(80);
+        var t4 = toastText();
+        record('④ 拖入无效类型（drop）→ 明确反馈', t4.indexOf('仅支持') >= 0, 'toast="' + t4 + '"');
+      } catch (e) { record('④ 无效类型 drop', false, String(e)); }
+
+      /* ⑤ 主按钮「生成配色」 */
+      try {
+        el('copyInput').value = '温柔暖阳，治愈每一刻';
+        el('generateBtn').click();
+        await sleep(100);
+        var st5 = win().__IPS.get();
+        record('⑤ 点击「生成配色」→ 三套方案',
+          st5.hasResult && st5.schemes.length === 3 && !!st5.preview,
+          'schemes=' + st5.schemes.length + ' · mood=' + (st5.mood && st5.mood.label) + ' · preview=' + JSON.stringify(st5.preview));
+      } catch (e) { record('⑤ 生成配色', false, String(e)); }
+
+      /* ⑥ 文案变化（input 事件）→ 自动重算（非仅改预览文字） */
+      try {
+        var before = JSON.stringify(win().__IPS.get().schemes.map(function (s) { return s.roles; }));
+        var ci = el('copyInput');
+        ci.value = '清冷克制，雪后初晴';
+        ci.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(850); // debounce 480ms 后重算
+        var st6 = win().__IPS.get();
+        var after = JSON.stringify(st6.schemes.map(function (s) { return s.roles; }));
+        record('⑥ 文案变化（input 事件）→ 自动重算配色',
+          before !== after,
+          'mood=' + (st6.mood && st6.mood.label) + ' · 色值变化=' + (before !== after));
+      } catch (e) { record('⑥ 文案变化重算', false, String(e)); }
+
+      /* ⑦ 方案切换 → 预览变化 */
+      try {
+        var beforeP = JSON.stringify(win().__IPS.get().preview);
+        var cards = doc().querySelectorAll('#schemeList .scheme-card');
+        if (cards.length < 3) throw new Error('方案卡片不足 3 个');
+        cards[2].click();
+        await sleep(80);
+        var st7 = win().__IPS.get();
+        record('⑦ 点击方案卡片 → 切换下方预览',
+          st7.activeScheme === 2 && JSON.stringify(st7.preview) !== beforeP,
+          'activeScheme=' + st7.activeScheme + ' · 预览变化=' + (JSON.stringify(st7.preview) !== beforeP));
+      } catch (e) { record('⑦ 方案切换', false, String(e)); }
+
+      /* ⑧ 复制按钮 → 复制对应 HEX 并反馈 */
+      try {
+        var copied = [];
+        try {
+          Object.defineProperty(win().navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: function (t) { copied.push(t); return Promise.resolve(); } },
+          });
+        } catch (e2) {}
+        var btn = doc().querySelector('#schemeList .copy-btn');
+        var hex = btn.getAttribute('data-copy');
+        btn.click();
+        await sleep(80);
+        var t8 = toastText();
+        record('⑧ 复制按钮 → 复制对应 HEX 并反馈',
+          copied.indexOf(hex) >= 0 || t8.indexOf(hex) >= 0,
+          '复制=' + JSON.stringify(copied) + ' · toast="' + t8 + '"');
+      } catch (e) { record('⑧ 复制按钮', false, String(e)); }
+
+      /* ⑨ 更换图片 → 触发文件选择 */
+      try {
+        var fi9 = el('fileInput');
+        var clicked = 0;
+        var orig = fi9.click;
+        fi9.click = function () { clicked++; };
+        el('replaceBtn').click();
+        fi9.click = orig;
+        record('⑨ 「更换图片」→ 触发文件选择', clicked === 1, 'fileInput.click() 调用 ' + clicked + ' 次');
+      } catch (e) { record('⑨ 更换图片', false, String(e)); }
+
+      /* ⑩ 空文案 → 明确提示 */
+      try {
+        el('copyInput').value = '';
+        el('generateBtn').click();
+        await sleep(80);
+        var t10 = toastText();
+        record('⑩ 空文案 → 明确提示', t10.indexOf('文案') >= 0, 'toast="' + t10 + '"');
+      } catch (e) { record('⑩ 空文案', false, String(e)); }
+
+      finish();
+    }
+
+    function finish() {
+      var passed = results.filter(function (r) { return r.pass; }).length;
+      var total = results.length;
+      var failed = total - passed;
+      summaryEl.textContent = (failed === 0 ? '全部通过 ' : '存在失败 ') + passed + '/' + total;
+      summaryEl.className = failed === 0 ? 'ok' : 'bad';
+      window.__E2E_RESULT = { passed: passed, failed: failed, total: total, results: results };
+    }
+
+    window.__E2E = { run: run };
+    iframe.addEventListener('load', function () { run(); });
+  })();
+  </script>
+</body>
+</html>

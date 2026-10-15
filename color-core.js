@@ -778,12 +778,16 @@
     const cands = pickCandidates(bgRgb, region, paletteEntries.slice(0, 4).map((e) => e.rgb), enhanceOpts);
     const used = [];
     const order = ['正文', '辅助信息', '主标题', '副标题', '强调', '装饰'];
+    /* 情绪的「强调色使用程度」：高则偏好高饱和强调，低则偏好克制强调 */
+    const accentLevel = enhanceOpts && enhanceOpts.mood && enhanceOpts.mood.accentLevel != null
+      ? clamp(enhanceOpts.mood.accentLevel, 0, 1) : 0.5;
     for (const use of order) {
       let best = null;
       for (const c of cands) {
         if (isUsed(used, c.rgb)) continue;
         const sc = scoreCand(c, region, used, use);
         if (sc.ev.worst < ROLE_MIN[use]) continue;
+        if (use === '强调') sc.score += (c.sat / 100 - 0.5) * (accentLevel - 0.5) * 0.8;
         if (!best || sc.score > best.sc.score) best = { c, sc };
       }
       if (!best) { // 放宽硬线：取对区域平均对比最高者（极端背景无纯色可达标时最实用）
@@ -803,29 +807,49 @@
     return finalizeScheme(s, region);
   }
 
-  /* 方案三：氛围艺术色 —— 由背景冷暖推导的艺术化用色 */
-  function schemeArt(paletteEntries, region, global) {
-    const s = schemeBase('art', '氛围艺术色', '海报 · 封面 · 艺术排版',
-      '面向大标题、短句与艺术化排版的用色：染色白、暖金、冰调与深调都由背景冷暖推导，逐一通过对比度检测。');
+  /* 方案三：氛围艺术色 —— 从画面主色系出发，在 OKLCH 中推导艺术化用色。
+     明度取「画面上限/下限/中间调」三个锚点，色相在保留原图关系的前提下
+     按冷暖与情绪做有限偏移，色度受 satMax 约束。不用固定配色配方。 */
+  function schemeArt(paletteEntries, region, global, bgType, enhanceOpts) {
+    const tag = bgType && bgType.label ? (bgType.label + ' · 艺术强调') : '海报 · 封面 · 艺术排版';
+    const s = schemeBase('art', '氛围艺术色', tag,
+      '面向大标题、短句与艺术化排版的用色：从画面主色系在 OKLCH 中推导染色白、深调、中间调与氛围点缀色，逐一通过对比度检测。');
     const bgRgb = region.meanRgb;
-    const h0 = rgbToHsl(bgRgb).h;
     const warm = global ? global.warmCool : 0;
-    const recipes = [
-      ['art-white', h0, 12, 95],
-      ['art-deep', h0, 34, 20],
-      ['art-mid', hueShift(h0, warm >= 0 ? 30 : -30), clamp(rgbToHsl(bgRgb).s + 8, 20, 42), 58],
-      ['art-glow', hueShift(h0, warm >= 0 ? 25 : 160), 55, warm >= 0 ? 66 : 58],
-      ['art-white', hueShift(h0, warm >= 0 ? 160 : -20), 26, 80],
-      ['art-mid', hueShift(h0, 210), 30, 44],
-      ['art-glow', hueShift(h0, 90), 44, 50],
-    ];
+    const dCScale = enhanceOpts && enhanceOpts.dCScale != null ? enhanceOpts.dCScale : 1;
+    const satMax = enhanceOpts && enhanceOpts.satMax != null ? enhanceOpts.satMax : 100;
+
+    /* 从画面主色系取前三个色相角，作为艺术色的推导来源 */
+    const hues = (paletteEntries || []).slice(0, 3)
+      .map((e) => oklabToOklch(rgbToOklab(e.rgb))[2]);
+    if (!hues.length) hues.push(rgbToHsl(bgRgb).h);
+
+    /* 冷暖决定偏移方向：暖图向红/金偏，冷图向青/冰偏（色相偏移 ≤ 30°，保持画面气质） */
+    const warmShift = warm >= 0 ? 22 : -22;
+    const coolShift = warm >= 0 ? 150 : -150;
+    const capC = (c) => Math.min(c, satMax / 100 * 0.32);
+
+    /* 每个色相生成一组艺术锚点：染色白 / 深调 / 中间调 / 点缀 */
+    const defs = [];
+    hues.forEach((h0, i) => {
+      defs.push({ kind: 'art-white', h: h0, L: 0.93 - i * 0.02, C: capC(0.05 + i * 0.02), dH: warmShift * 0.5 });
+      defs.push({ kind: 'art-deep',  h: h0, L: 0.24,           C: capC(0.10 + i * 0.02), dH: 0 });
+      if (i < 2) defs.push({ kind: 'art-mid',  h: h0, L: 0.56 - i * 0.05, C: capC(0.13 + i * 0.03), dH: warmShift });
+      if (i < 2) defs.push({ kind: 'art-glow', h: h0, L: warm >= 0 ? 0.68 : 0.62, C: capC(0.16 + i * 0.03), dH: coolShift });
+    });
+    /* 情绪/背景的色度整体缩放 */
+    defs.forEach((d) => { d.C *= dCScale; });
+
     const used = [];
-    for (const [kind, h, ss, l] of recipes) {
-      const rgb = hslToRgb(h, ss, l).map((v) => clamp(Math.round(v), 0, 255));
+    for (const d of defs) {
+      if (s.colors.length >= 8) break;
+      const rgb = gamutMap(d.L, d.C, d.h + d.dH);
       if (isUsed(used, rgb)) continue;
-      used.push(rgb);
       const ev = evaluateOnRegion(rgb, region);
-      const c = colorEntry(rgb, kind, ev, region);
+      /* 艺术色也必须可用：连「装饰」级（2:1）都过不了的候选直接丢弃 */
+      if (ev.worst < 2) continue;
+      used.push(rgb);
+      const c = colorEntry(rgb, d.kind, ev, region);
       c.use = '';
       s.colors.push(c);
     }
@@ -855,7 +879,9 @@
         const read = Math.min(1, c.worstC / 6);
         const comfort = 1 - Math.max(0, c.sat - 62) / 38;
         let sc = read * ROLE_W[use].read + comfort * ROLE_W[use].comfort;
-        if (c.worstC >= min) sc += 0.4;
+        /* 角色对比硬线：达标加分；未达标按缺口扣分 ——
+           保证「正文」拿到当前可用颜色里最可读的那一个，而不是单纯最高分。 */
+        sc += c.worstC >= min ? 0.4 : -(min - c.worstC) * 0.14;
         if (use === '强调') sc += c.sat / 100;
         if (use === '正文' || use === '辅助信息') sc += (1 - Math.min(1, c.sat / 70)) * 0.25;
         if (use === '装饰') sc -= Math.min(1, c.worstC / 6) * 0.2; // 装饰允许更艺术
@@ -888,13 +914,18 @@
     const satMean = count ? satSum / count : 0;
     const avgChroma = count ? chromaSum / count : 0;
 
-    /* 纯白背景：大面积近白、几乎无彩色像素 */
-    if (meanLum > 0.88 && satMean < 8 && avgChroma < 0.02) {
-      return { type: 'pure-white', label: '纯白背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式' };
+    /* 判定「无彩色」用感知色度（OKLCH chroma），而不是 HSL 饱和度：
+       近白色（如 250,250,248）的 HSL 饱和度会被公式放大到 16%+，但感知上它仍是白。
+       用 avgChroma < 0.02 才能真正识别「几乎没有颜色」。 */
+    const achromatic = avgChroma < 0.022 && satMean < 30;
+
+    /* 纯白背景：大面积近白且几乎无彩色 → 主动设计模式（不伪造提取色） */
+    if (meanLum > 0.86 && achromatic) {
+      return { type: 'pure-white', label: '纯白背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式，生成克制协调的深色方案' };
     }
-    /* 纯黑背景：大面积近黑、几乎无彩色像素 */
-    if (meanLum < 0.08 && satMean < 8 && avgChroma < 0.02) {
-      return { type: 'pure-black', label: '纯黑背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式' };
+    /* 纯黑背景：大面积近黑且几乎无彩色 → 主动设计模式 */
+    if (meanLum < 0.10 && achromatic) {
+      return { type: 'pure-black', label: '纯黑背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式，生成清晰协调的浅色方案' };
     }
     /* 极浅低饱和 */
     if (meanLum > 0.65 && satMean < 25) {
@@ -904,9 +935,13 @@
     if (meanLum < 0.18 && satMean < 25) {
       return { type: 'dark-low-sat', label: '深色低饱和背景', mode: 'A', satStrategy: 'low-to-mid', hint: '保持克制，生成低至中等饱和度配色' };
     }
-    /* 低饱和摄影 / 柔和插画 */
+    /* 低饱和摄影 / 柔和插画（明暗有变化） */
     if (satMean < 30 && complexity > 0.12) {
       return { type: 'low-sat-photo', label: '低饱和度摄影 / 柔和插画', mode: 'A', satStrategy: 'preserve', hint: '保留原图气质，适度提亮不增艳' };
+    }
+    /* 中亮度平涂低饱和（灰色调 / 淡彩）：保留灰度气质，不无理由增艳 */
+    if (satMean < 25 && avgChroma < 0.08) {
+      return { type: 'low-sat', label: '低饱和背景', mode: 'A', satStrategy: 'preserve', hint: '保留原图的灰度与色彩气质，不做无理由的增艳' };
     }
     /* 高饱和度、色彩丰富 */
     if (satMean > 50 || maxChroma > 0.18) {
@@ -915,7 +950,8 @@
     return { type: 'normal', label: '通用背景', mode: 'A', satStrategy: 'standard', hint: '' };
   }
 
-  /* adaptiveEnhanceParams：根据背景类型返回增强幅度缩放与饱和度上限 */
+  /* adaptiveEnhanceParams：根据背景类型返回增强幅度缩放与饱和度上限。
+     既接受 classifyBg 返回的对象，也接受其 type 字符串。 */
   function adaptiveEnhanceParams(bgType) {
     const map = {
       'pure-white':         { dLScale: 1.0, dCScale: 0.35, satMax: 38 },
@@ -923,10 +959,12 @@
       'very-light-low-sat': { dLScale: 1.0, dCScale: 0.55, satMax: 48 },
       'dark-low-sat':       { dLScale: 1.0, dCScale: 0.55, satMax: 48 },
       'low-sat-photo':      { dLScale: 1.0, dCScale: 0.70, satMax: 55 },
+      'low-sat':            { dLScale: 1.0, dCScale: 0.62, satMax: 52 },
       'high-sat':           { dLScale: 0.9, dCScale: 0.40, satMax: 52 },
       'normal':             { dLScale: 1.0, dCScale: 1.00, satMax: 72 },
     };
-    return map[bgType] || map['normal'];
+    const key = bgType && typeof bgType === 'object' ? bgType.type : bgType;
+    return map[key] || map['normal'];
   }
 
   /* DESIGN_PALETTES：纯白/纯黑背景的预定义专业配色关系（source='design'） */
@@ -961,35 +999,78 @@
     });
   }
 
+  /* ---------- 文案情绪 → 配色参数 ----------
+     mood 由 mood-core.js 计算，形状：
+     { id, label, warmth:-1..1, satScale:0.5..1.4, lumBias:-1..1,
+       contrast:0..1, accentLevel:0..1, hueBias:-14..14 }
+     applyMood：把情绪作用在画面提取色上（OKLCH 内），只做有限偏移，
+     保证「图片决定颜色范围」不被情绪破坏。mood 为 null 时原样返回。 */
+  function applyMood(paletteEntries, mood) {
+    if (!mood || !paletteEntries || !paletteEntries.length) return paletteEntries;
+    const hueBias = clamp(mood.hueBias || 0, -14, 14);
+    const satScale = clamp(mood.satScale != null ? mood.satScale : 1, 0.5, 1.4);
+    const lumBias = clamp((mood.lumBias || 0) * 0.06, -0.06, 0.06);
+    const identical = !hueBias && satScale === 1 && !lumBias;
+    if (identical) return paletteEntries;
+    return paletteEntries.map((e) => {
+      const [L, C, H] = oklabToOklch(rgbToOklab(e.rgb));
+      const rgb = gamutMap(clamp(L + lumBias, 0.05, 0.95), C * satScale, (((H + hueBias) % 360) + 360) % 360);
+      return Object.assign({}, e, { rgb, hex: rgbToHex(rgb), hsl: rgbToHsl(rgb) });
+    });
+  }
+
   /* ---------- 总入口：三套方案 ---------- */
   function buildSchemes(paletteEntries, region, global, opts) {
     opts = opts || {};
     const bgType = opts.bgType || classifyBg(paletteEntries, global);
     const params = adaptiveEnhanceParams(bgType.type);
-    const enhanceOpts = { dLScale: params.dLScale, dCScale: params.dCScale, satMax: params.satMax };
+    const mood = opts.mood || null;
+    /* 情绪只微调饱和度上限与色度缩放，可读性硬线始终优先 */
+    const moodSat = mood && mood.satScale != null ? clamp(mood.satScale, 0.6, 1.3) : 1;
+    const moodContrast = mood && mood.contrast != null ? mood.contrast : 0.5;
+    const enhanceOpts = {
+      dLScale: params.dLScale,
+      dCScale: params.dCScale * moodSat,
+      satMax: clamp(Math.round(params.satMax * (0.85 + moodSat * 0.15)), 24, 88),
+      mood: mood,
+      contrast: moodContrast,
+    };
 
-    /* 模式 B：主动设计 —— 用设计补色替代原色 */
+    /* 模式 B：主动设计 —— 用设计补色替代原色。
+       设计色本身已克制，情绪只做轻微色相偏移（原图无色彩信息，不能靠情绪造色）。 */
     let effectivePalette = paletteEntries;
     if (bgType.mode === 'B') {
       const designColors = designPalette(bgType.type);
-      if (designColors.length) effectivePalette = designColors;
+      if (designColors.length) {
+        const damped = mood ? Object.assign({}, mood, {
+          satScale: clamp(1 + ((mood.satScale != null ? mood.satScale : 1) - 1) * 0.35, 0.82, 1.12),
+          lumBias: (mood.lumBias || 0) * 0.4,
+        }) : null;
+        effectivePalette = applyMood(designColors, damped);
+      }
+    } else {
+      effectivePalette = applyMood(paletteEntries, mood);
     }
 
-    return [
-      schemeHarmony(effectivePalette, region, bgType, enhanceOpts),
-      schemeRoles(effectivePalette, region, bgType, enhanceOpts),
-      schemeArt(effectivePalette, region, global, bgType, enhanceOpts),
-    ];
+    const harmony = schemeHarmony(effectivePalette, region, bgType, enhanceOpts);
+    const roles = schemeRoles(effectivePalette, region, bgType, enhanceOpts);
+    const art = schemeArt(effectivePalette, region, global, bgType, enhanceOpts);
+    if (mood && mood.label) {
+      [harmony, roles, art].forEach((sc) => { sc.tag = mood.label + ' · ' + sc.tag; sc.mood = mood.label; });
+    }
+    return [harmony, roles, art];
   }
 
   return {
     clamp, hexToRgb, rgbToHex, rgbToHsl, hslToRgb, rgbToHsv,
     relLum, contrast, levelOf, nameOf, hueName, hueShift,
     srgbToLinear, linearToSrgb, rgbToOklab, oklabToRgb, distLab,
-    /* OKLCH 连续增强层（新增） */
+    /* OKLCH 连续增强层 */
     oklabToOklch, oklchToOklab, gamutMap, enhanceColor, enhancementDegree, generateVariants,
     medianCutLab, kmeansLab, mergeClose, adaptForContrast, harmonizePalette,
     analyzeRegion, scrimComposite, evaluateOnRegion, contrastStatus,
     pickCandidates, scoreCand, reasonOf, buildSchemes,
+    /* 背景风格识别与情绪适配层 */
+    classifyBg, adaptiveEnhanceParams, designPalette, applyMood,
   };
 });

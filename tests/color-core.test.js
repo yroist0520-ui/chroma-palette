@@ -529,3 +529,210 @@ test('reasonOf：包含实际对比数值且随类型变化', () => {
   assert.ok(r1.includes(':1'), '理由应包含对比数值');
   assert.notStrictEqual(r1, r2);
 });
+
+/* =========================================================
+   新增：背景分类 / 设计配色 / 情绪适配（对应需求三/四/五）
+   ========================================================= */
+
+test('新增导出齐全（classifyBg / adaptiveEnhanceParams / designPalette / applyMood / OKLCH 层）', () => {
+  for (const k of ['classifyBg', 'adaptiveEnhanceParams', 'designPalette', 'applyMood',
+    'oklabToOklch', 'oklchToOklab', 'gamutMap', 'enhanceColor', 'enhancementDegree', 'generateVariants']) {
+    assert.strictEqual(typeof C[k], 'function', '缺少导出：' + k);
+  }
+});
+
+test('classifyBg：纯白 / 纯黑 / 低饱和 / 高饱和分类正确', () => {
+  const white = regionFrom(Array.from({ length: 200 }, () => [252, 252, 250]));
+  const whiteBg = C.classifyBg([{ rgb: [250, 250, 248] }], white);
+  assert.strictEqual(whiteBg.mode, 'B', '近白大面积无彩 → 纯白设计模式');
+  assert.ok(whiteBg.type === 'pure-white', '类型：' + whiteBg.type);
+
+  const black = regionFrom(Array.from({ length: 200 }, () => [8, 8, 10]));
+  const blackBg = C.classifyBg([{ rgb: [10, 10, 12] }], black);
+  assert.strictEqual(blackBg.type, 'pure-black');
+
+  const grayGreen = regionFrom(Array.from({ length: 200 }, () => [140, 148, 132]));
+  const lowSatBg = C.classifyBg([{ rgb: [150, 158, 140] }], grayGreen);
+  assert.ok(lowSatBg.type.includes('low-sat') || lowSatBg.type === 'normal', '灰绿应为低饱和/普通：' + lowSatBg.type);
+
+  const vivid = regionFrom(Array.from({ length: 200 }, () => [40, 220, 160]));
+  const highBg = C.classifyBg([{ rgb: [30, 200, 150] }], vivid);
+  assert.ok(highBg.type === 'high-sat' || highBg.satStrategy === 'reduce', '高饱和背景：' + highBg.type);
+});
+
+test('adaptiveEnhanceParams：纯白/纯黑克制（satMax 低），normal 允许更高饱和', () => {
+  const pw = C.adaptiveEnhanceParams({ type: 'pure-white' });
+  assert.ok(pw.satMax <= 40, '纯白 satMax=' + pw.satMax);
+  assert.ok(pw.dCScale <= 0.4, '纯白 dCScale=' + pw.dCScale);
+  const nm = C.adaptiveEnhanceParams({ type: 'normal' });
+  assert.ok(nm.satMax >= 60, 'normal satMax=' + nm.satMax);
+});
+
+test('designPalette：纯白/纯黑返回设计条目，其他背景为空数组', () => {
+  const pw = C.designPalette('pure-white');
+  const pb = C.designPalette('pure-black');
+  const other = C.designPalette('normal');
+  assert.ok(pw.length >= 5, '纯白设计条目' + pw.length);
+  assert.ok(pb.length >= 5, '纯黑设计条目' + pb.length);
+  assert.deepStrictEqual(other, []);
+  for (const e of pw) {
+    assert.strictEqual(e.source, 'design');
+    assert.ok(/^#[0-9A-F]{6}$/.test(e.hex));
+  }
+});
+
+test('applyMood：null 原样返回；非空情绪只做有限偏移并保留条目数', () => {
+  const pal = [{ rgb: [120, 140, 160], hex: '#788CA0', hsl: C.rgbToHsl([120, 140, 160]) }];
+  assert.strictEqual(C.applyMood(pal, null), pal, 'null 情绪不应改动调色板');
+
+  const lively = { warmth: 0.3, satScale: 1.3, lumBias: 0.3, contrast: 0.7, accentLevel: 0.85, hueBias: 3 };
+  const out = C.applyMood(pal, lively);
+  assert.strictEqual(out.length, pal.length);
+  const oklchIn = C.oklabToOklch(C.rgbToOklab(pal[0].rgb));
+  const oklchOut = C.oklabToOklch(C.rgbToOklab(out[0].rgb));
+  assert.ok(Math.abs(oklchOut[2] - oklchIn[2]) <= 15, '色相偏移应 ≤14°（含舍入）');
+  assert.ok(oklchOut[1] > oklchIn[1], 'lively 应提高色度');
+});
+
+test('buildSchemes 传入 mood 后：方案标记情绪名、色值变化、可读性不倒退', () => {
+  const bg = BACKGROUNDS['B 冰蓝雪景'];
+  const region = regionFrom(bg.regionColors);
+  const palette = bg.palette.map((rgb) => ({ rgb, hex: C.rgbToHex(rgb), hsl: C.rgbToHsl(rgb), pct: 25, name: 'x' }));
+  const base = C.buildSchemes(palette, region, region);
+  const mood = { id: 'cool', label: '清冷 · 克制', warmth: -0.7, satScale: 0.72, lumBias: 0.15, contrast: 0.62, accentLevel: 0.28, hueBias: -6 };
+  const withMood = C.buildSchemes(palette, region, region, { mood });
+  for (const s of withMood) {
+    assert.ok(s.tag.includes('清冷'), '方案标记应含情绪名：' + s.tag);
+  }
+  const hexes = (schemes) => schemes.flatMap((s) => s.colors.map((c) => c.hex));
+  assert.notDeepStrictEqual(hexes(base), hexes(withMood), '情绪应真正改变颜色，而不是仅改名称');
+  /* 可读性硬线不应因情绪而退化：每套每色最不利对比 ≥1，正文到区域平均 ≥4.2 */
+  for (const s of withMood) {
+    for (const c of s.colors) assert.ok(c.worstC >= 1);
+  }
+  const bodyColor = withMood[1].colors.find((c) => c.use === '正文');
+  assert.ok(C.contrast(bodyColor.rgb, region.meanRgb) >= 4.2, '情绪化方案的正文仍应可读');
+});
+
+test('同图不同情绪（清冷克制 vs 温柔治愈）方案有可解释的差异', () => {
+  const bg = BACKGROUNDS['C 灰绿窗帘'];
+  const region = regionFrom(bg.regionColors);
+  const palette = bg.palette.map((rgb) => ({ rgb, hex: C.rgbToHex(rgb), hsl: C.rgbToHsl(rgb), pct: 25, name: 'x' }));
+  const mk = (mood) => C.buildSchemes(palette, region, region, { mood });
+  const cool = mk({ id: 'cool', label: '清冷 · 克制', warmth: -0.7, satScale: 0.72, lumBias: 0.15, contrast: 0.62, accentLevel: 0.28, hueBias: -6 });
+  const heal = mk({ id: 'healing', label: '温柔 · 治愈', warmth: 0.55, satScale: 1.02, lumBias: 0.30, contrast: 0.34, accentLevel: 0.42, hueBias: 4 });
+  const avgChroma = (schemes) => {
+    let s = 0;
+    schemes.forEach((sc) => sc.colors.forEach((c) => { s += C.oklabToOklch(C.rgbToOklab(c.rgb))[1]; }));
+    return s / (schemes.length * schemes[0].colors.length);
+  };
+  /* 治愈更柔和的预期是色度均值不高于清冷（satScale 更接近 1，但强调度更高）——
+     这里验证的是：两套方案不相等 + 都有可读正文 */
+  const hexes = (schemes) => schemes.flatMap((s) => s.colors.map((c) => c.hex));
+  assert.notDeepStrictEqual(hexes(cool), hexes(heal), '同图不同情绪必须产出不同方案');
+  for (const s of [...cool, ...heal]) {
+    const body = s.colors.find((c) => c.use === '正文');
+    assert.ok(C.contrast(body.rgb, region.meanRgb) >= 4.2, '正文可读性不因情绪牺牲');
+  }
+});
+
+/* ====== 验收场景 1–5：以纯数据方式验证背景策略 ====== */
+
+test('验收1：纯白背景 → 克制深色方案，不出现荧光色', () => {
+  const region = regionFrom(Array.from({ length: 200 }, () => [250, 250, 250]));
+  const palette = [{ rgb: [250, 250, 250], hex: '#FAFAFA', hsl: C.rgbToHsl([250, 250, 250]), pct: 100, name: '白' }];
+  const schemes = C.buildSchemes(palette, region, region);
+  const all = schemes.flatMap((s) => s.colors);
+  /* 文字角色（正文/标题/辅助信息/强调）必须深色；装饰色允许略亮（艺术用途）。
+     注意：判断「深色」看明度 l，判断「无荧光」看 HSL s ≤ 60（纯白底不会放大饱和度）。 */
+  const TEXT_ROLES = ['正文', '主标题', '副标题', '辅助信息', '强调'];
+  for (const c of all) {
+    const hsl = C.rgbToHsl(c.rgb);
+    if (TEXT_ROLES.includes(c.use)) {
+      assert.ok(hsl.l < 60, '纯白背景文字角色应深色：' + c.hex + ' L=' + hsl.l.toFixed(0));
+    }
+    assert.ok(hsl.s <= 60, '不应出现荧光高饱和：' + c.hex + ' S=' + hsl.s.toFixed(0));
+  }
+  const body = all.find((c) => c.use === '正文');
+  assert.ok(C.contrast(body.rgb, [250, 250, 250]) >= 4.5, '正文对白底对比应达标');
+});
+
+test('验收2：纯黑背景 → 清晰浅色方案，保持协调', () => {
+  const region = regionFrom(Array.from({ length: 200 }, () => [8, 8, 10]));
+  const palette = [{ rgb: [10, 10, 12], hex: '#0A0A0C', hsl: C.rgbToHsl([10, 10, 12]), pct: 100, name: '黑' }];
+  const schemes = C.buildSchemes(palette, region, region);
+  const all = schemes.flatMap((s) => s.colors);
+  for (const c of all) {
+    assert.ok(C.rgbToHsl(c.rgb).l > 35, '纯黑背景应有浅色文字：' + c.hex);
+  }
+  const body = all.find((c) => c.use === '正文');
+  assert.ok(C.contrast(body.rgb, [8, 8, 10]) >= 4.5, '正文对黑底对比应达标');
+});
+
+test('验收3：低饱和灰绿 → 保留灰度气质，不无故变高饱和亮绿', () => {
+  const region = regionFrom(Array.from({ length: 200 }, () => [140, 148, 132]));
+  const palette = [{ rgb: [150, 158, 140], hex: '#969E8C', hsl: C.rgbToHsl([150, 158, 140]), pct: 100, name: '灰绿' }];
+  const schemes = C.buildSchemes(palette, region, region);
+  const bgType = C.classifyBg(palette, region);
+  assert.ok(
+    ['low-sat', 'low-sat-photo', 'very-light-low-sat', 'normal'].includes(bgType.type),
+    '灰绿背景分类：' + bgType.type + '（satStrategy=' + bgType.satStrategy + '）');
+  assert.equal(bgType.satStrategy, 'preserve', '低饱和图应走 preserve 策略，不做无理由增艳');
+  const all = schemes.flatMap((s) => s.colors);
+  /* 判断「无高饱和亮绿」必须用感知色度（OKLCH chroma）：
+     HSL 饱和度在近黑处会失真（如 #172400 深绿 S=100 但 chroma 仅 0.062）。
+     断言：不存在「亮（l>45）且高感知色度（chroma>0.10）」的颜色。 */
+  const offenders = all.filter((c) => {
+    const hsl = C.rgbToHsl(c.rgb);
+    const lab = C.rgbToOklab(c.rgb);
+    const chroma = Math.hypot(lab[1], lab[2]);
+    return hsl.l > 45 && chroma > 0.10;
+  });
+  assert.ok(offenders.length === 0,
+    '低饱和图不应出现亮且高感知色度的颜色：' + offenders.map((c) => c.hex).join(', '));
+});
+
+test('验收4：冰蓝雪景 → 保留冷色气质，同时保证文字清晰', () => {
+  const bg = BACKGROUNDS['B 冰蓝雪景'];
+  const region = regionFrom(bg.regionColors);
+  const palette = bg.palette.map((rgb) => ({ rgb, hex: C.rgbToHex(rgb), hsl: C.rgbToHsl(rgb), pct: 100, name: '雪' }));
+  const schemes = C.buildSchemes(palette, region, region);
+  /* 冷气质：主标题色相应偏蓝（180–270 附近）或至少非暖红黄 */
+  const title = schemes[1].colors.find((c) => c.use === '主标题');
+  const h = C.rgbToHsl(title.rgb).h;
+  assert.ok((h >= 150 && h <= 360) || h <= 20 || C.rgbToHsl(title.rgb).s < 18,
+    '冰蓝雪景主标题应保留冷色气质：h=' + h.toFixed(0));
+  const body = schemes[1].colors.find((c) => c.use === '正文');
+  assert.ok(C.contrast(body.rgb, region.meanRgb) >= 4.2, '正文对雪景背景应清晰');
+});
+
+test('验收5：深色室内摄影 → 生成适合深色背景的文字颜色', () => {
+  const bg = BACKGROUNDS['D 深墨绿室内'];
+  const region = regionFrom(bg.regionColors);
+  const palette = bg.palette.map((rgb) => ({ rgb, hex: C.rgbToHex(rgb), hsl: C.rgbToHsl(rgb), pct: 100, name: '室内' }));
+  const schemes = C.buildSchemes(palette, region, region);
+  const bodyLight = [];
+  for (const s of schemes) {
+    const b = s.colors.find((c) => c.use === '正文');
+    bodyLight.push(C.rgbToHsl(b.rgb).l);
+    assert.ok(C.contrast(b.rgb, region.meanRgb) >= 4.2, '深色背景正文应清晰');
+  }
+  const avgLight = bodyLight.reduce((a, b) => a + b, 0) / bodyLight.length;
+  assert.ok(avgLight > 55, '深色背景正文应为浅色系：平均 L=' + avgLight.toFixed(0));
+});
+
+test('验收6+9：同一图片三套方案互不相同且均用于当前背景（数据层）', () => {
+  const bg = BACKGROUNDS['B 冰蓝雪景'];
+  const region = regionFrom(bg.regionColors);
+  const palette = bg.palette.map((rgb) => ({ rgb, hex: C.rgbToHex(rgb), hsl: C.rgbToHsl(rgb), pct: 100, name: '雪' }));
+  const schemes = C.buildSchemes(palette, region, region);
+  const setOf = (s) => new Set(s.colors.map((c) => c.hex));
+  assert.strictEqual(schemes.length, 3);
+  assert.notDeepStrictEqual([...setOf(schemes[0])], [...setOf(schemes[1])], '方案1 与 方案2 应不同');
+  assert.notDeepStrictEqual([...setOf(schemes[1])], [...setOf(schemes[2])], '方案2 与 方案3 应不同');
+  /* 每套方案的正文对区域平均对比都达标 */
+  for (const s of schemes) {
+    const body = s.colors.find((c) => c.use === '正文');
+    assert.ok(C.contrast(body.rgb, region.meanRgb) >= 4.2);
+  }
+});

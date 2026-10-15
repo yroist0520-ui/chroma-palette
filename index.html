@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Image Palette Studio · 基于背景图像的智能文字配色</title>
-  <meta name="description" content="上传一张背景图，自动分析画面色彩，生成可以直接叠在图上写字的成套文字配色方案，并实时预览真实排版效果。" />
+  <title>CHROMA · 基于图片与文案的智能文字配色</title>
+  <meta name="description" content="上传一张图片，输入一段文案：系统读取图片真实像素决定颜色范围，判断文案情绪决定方向，按 WCAG 对比度过滤，生成可直接用于图片排版的文字配色。" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d8ff3e' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -12,319 +12,144 @@
   <div class="atmosphere" aria-hidden="true">
     <div class="atmosphere-grid"></div>
     <div class="atmosphere-glow"></div>
-    <div class="atmosphere-grain"></div>
   </div>
 
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <circle cx="12" cy="12" r="4"/>
-          <line x1="12" y1="2" x2="12" y2="6"/>
-          <line x1="12" y1="18" x2="12" y2="22"/>
-          <line x1="2" y1="12" x2="6" y2="12"/>
-          <line x1="18" y1="12" x2="22" y2="12"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
       </span>
-      <span class="brand-text">
-        <strong>Image Palette Studio</strong>
-        <em>基于背景图像的智能文字配色</em>
-      </span>
+      <div class="brand-text">
+        <strong>CHROMA</strong>
+        <span>图片定范围 · 文案定情绪 · 可读性定采用</span>
+      </div>
     </div>
     <div class="topbar-actions">
-      <span class="topbar-note"><span class="dot" aria-hidden="true"></span>本地分析 · 图片不上传服务器</span>
-      <button class="btn btn-ghost" id="sampleBtn" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.97a4 4 0 0 0 3.3-1.7l5.46-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.97a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.04a4 4 0 0 1-3.3-1.8l-.36-.45"/></svg>
-        示例图
-      </button>
-      <button class="btn btn-ghost" id="reanalyzeBtn" type="button" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
-        重新分析
-      </button>
-      <button class="btn btn-primary" id="pickBtn" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
-        上传图片
-      </button>
+      <button class="btn btn-ghost" id="sampleBtn" type="button">示例图</button>
+      <button class="btn btn-ghost" id="reanalyzeBtn" type="button" disabled>重新分析</button>
     </div>
   </header>
 
-  <main class="workspace">
-    <!-- ============ 左：画布舞台 ============ -->
-    <section class="stage-col" aria-label="图片与文字预览">
-      <div class="stage" id="stage">
-        <!-- 空状态：上传区 -->
-        <div class="dropzone" id="dropzone">
-          <span class="dropzone-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-          </span>
-          <h1 class="dropzone-title">把背景图拖进来</h1>
-          <p class="dropzone-sub">支持 JPG / PNG / WebP · 也可直接 <kbd>⌘V</kbd> 粘贴剪贴板里的图片</p>
-          <div class="dropzone-actions">
-            <button class="btn btn-primary" id="dzPick" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
-              选择图片
-            </button>
-            <button class="btn btn-ghost" id="dzSample" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.97a4 4 0 0 0 3.3-1.7l5.46-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.97a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.04a4 4 0 0 1-3.3-1.8l-.36-.45"/></svg>
-              用示例图试试
-            </button>
+  <main class="layout">
+    <!-- 左列：上传区 + 实际预览区（同一块画布） -->
+    <section class="stage-col">
+      <div id="stage" class="stage">
+        <div id="dropzone" class="dropzone">
+          <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-4.5-4.5L7 20"/>
+          </svg>
+          <p class="dz-title">点击或拖入一张图片</p>
+          <p class="dz-sub">JPG / PNG / WebP · 全程本地分析，图片不会离开浏览器</p>
+          <div class="dz-actions">
+            <button id="dzPick" class="btn btn-soft" type="button">选择图片</button>
+            <button id="dzSample" class="btn btn-ghost" type="button">用示例图试试</button>
           </div>
-          <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png,image/webp" hidden />
         </div>
-
-        <!-- 已载入：图片 + 文字排版层 -->
-        <div class="frame" id="frame" hidden>
-          <img id="previewImg" alt="已载入的背景图" />
-          <div class="text-layer" id="textLayer">
-            <div class="overlay" id="overlay" tabindex="0" role="button" aria-label="拖动可移动文字框，分析结果会随位置更新">
-              <span class="overlay-scrim" id="overlayScrim" hidden></span>
-              <div class="overlay-text" id="overlayText">
-                <span class="ov-line ov-title" id="ovTitle">在山与海之间</span>
-                <span class="ov-line ov-sub" id="ovSub">A JOURNEY BETWEEN MOUNTAINS AND SEA</span>
-                <span class="ov-line ov-body" id="ovBody">把文字放进画面里，检验它是否真的被读到。拖动文字框，对比度与推荐会随位置实时更新。</span>
-                <span class="ov-line ov-aux" id="ovAux">IMAGE PALETTE STUDIO · 2026</span>
-              </div>
+        <div id="frame" class="frame" hidden>
+          <img id="previewImg" alt="上传图片的预览" draggable="false" />
+          <div id="overlay" class="overlay" tabindex="0" role="group" aria-label="文字预览框，可拖动调整位置">
+            <div id="overlayScrim" class="ov-scrim" hidden></div>
+            <div id="overlayText" class="ov-inner">
+              <div id="ovAccent" class="ov-accent" hidden></div>
+              <h2 id="ovTitle" class="ov-title"></h2>
+              <p id="ovBody" class="ov-body"></p>
             </div>
           </div>
-          <div class="frame-hint" id="frameHint">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
-            拖动文字框：推荐与对比度会随局部画面更新
-          </div>
+          <div id="frameHint" class="frame-hint">拖动文字框到你想放文字的位置，配色会按该区域重新计算</div>
         </div>
+        <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" hidden />
       </div>
-
-      <!-- 文案与排版控制 -->
-      <div class="controls" id="controls" hidden>
-        <div class="ctl-group ctl-texts">
-          <label class="field">
-            <span class="field-label">主标题</span>
-            <input type="text" id="titleInput" value="在山与海之间" />
-          </label>
-          <label class="field">
-            <span class="field-label">副标题</span>
-            <input type="text" id="subInput" value="A JOURNEY BETWEEN MOUNTAINS AND SEA" />
-          </label>
-          <label class="field field-wide">
-            <span class="field-label">正文</span>
-            <input type="text" id="bodyInput" value="把文字放进画面里，检验它是否真的被读到。拖动文字框，对比度与推荐会随位置实时更新。" />
-          </label>
-          <label class="field">
-            <span class="field-label">辅助小字</span>
-            <input type="text" id="auxInput" value="IMAGE PALETTE STUDIO · 2026" />
-          </label>
-        </div>
-
-        <div class="ctl-group ctl-style">
-          <label class="field">
-            <span class="field-label">字号 <b id="sizeVal">64</b></span>
-            <input type="range" id="sizeRange" min="24" max="140" value="64" />
-          </label>
-          <label class="field">
-            <span class="field-label">字重</span>
-            <select id="weightSelect">
-              <option value="300">细 300</option>
-              <option value="400">常规 400</option>
-              <option value="500">适中 500</option>
-              <option value="600" selected>半粗 600</option>
-              <option value="700">粗 700</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">行距 <b id="lhVal">1.35</b></span>
-            <input type="range" id="lhRange" min="10" max="22" value="135" />
-          </label>
-          <label class="field">
-            <span class="field-label">字距 <b id="lsVal">0.00em</b></span>
-            <input type="range" id="lsRange" min="-4" max="30" value="0" />
-          </label>
-          <label class="field">
-            <span class="field-label">对齐</span>
-            <select id="alignSelect">
-              <option value="left">左对齐</option>
-              <option value="center" selected>居中</option>
-              <option value="right">右对齐</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">框宽 <b id="widthVal">62%</b></span>
-            <input type="range" id="widthRange" min="30" max="96" value="62" />
-          </label>
-          <label class="field">
-            <span class="field-label">不透明度 <b id="opacityVal">100%</b></span>
-            <input type="range" id="opacityRange" min="30" max="100" value="100" />
-          </label>
-        </div>
-
-        <div class="ctl-group ctl-toggles">
-          <div class="field field-toggle">
-            <span class="field-label">描边</span>
-            <button class="switch" id="strokeToggle" type="button" role="switch" aria-checked="true">
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </button>
-          </div>
-          <div class="field field-toggle">
-            <span class="field-label">阴影</span>
-            <button class="switch" id="shadowToggle" type="button" role="switch" aria-checked="true">
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </button>
-          </div>
-          <div class="field field-toggle">
-            <span class="field-label">底衬</span>
-            <button class="switch" id="scrimToggle" type="button" role="switch" aria-checked="false">
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </button>
-          </div>
-          <label class="field field-colorsel">
-            <span class="field-label">预览文字颜色</span>
-            <select id="colorSel"><option value="-1">跟随方案角色</option></select>
-          </label>
-          <button class="btn btn-soft" id="resetBtn" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
-            恢复默认排版
-          </button>
-        </div>
+      <div class="stage-foot">
+        <button id="replaceBtn" class="btn btn-ghost" type="button" hidden>更换图片</button>
+        <span id="imgMeta" class="meta"></span>
       </div>
+      <!-- 可读性检查条：标题 / 正文 / 强调 三角色的真实对比度 -->
+      <div id="contrastStrip" class="contrast-strip" hidden></div>
     </section>
 
-    <!-- ============ 右：分析 / 方案面板 ============ -->
-    <aside class="panel-col" aria-label="分析与配色方案">
-      <!-- 可读性读数 -->
-      <div class="panel-block readout" id="readout">
-        <div class="readout-main">
-          <span class="readout-label">当前文字 · 区域对比度</span>
-          <span class="readout-ratio" id="ratioVal">—</span>
-          <span class="badge" id="ratioBadge">待载入图片</span>
+    <!-- 右列：文案 → 主按钮 → 结果 -->
+    <section class="panel-col">
+      <div class="panel">
+        <label class="p-label" for="copyInput">文案</label>
+        <textarea id="copyInput" rows="4" placeholder="写下你要放在图上的文字。&#10;第一行会成为标题；「引号」里的短词会成为强调词。"></textarea>
+        <div class="mood-row">
+          <span class="p-sub">情绪</span>
+          <div id="moodChips" class="chips" role="radiogroup" aria-label="文案情绪"></div>
         </div>
-        <div class="readout-worst">
-          <span>最不利处（明暗两端）</span>
-          <b class="mono" id="worstVal">—</b>
-        </div>
-        <div class="readout-pair">
-          <div class="chip">
-            <span class="chip-swatch" id="fgSwatch"></span>
-            <span class="chip-meta"><em>文字色</em><b id="fgHex">—</b></span>
-          </div>
-          <div class="chip">
-            <span class="chip-swatch" id="bgSwatch"></span>
-            <span class="chip-meta"><em>区域平均</em><b id="bgHex">—</b></span>
-          </div>
-          <div class="chip">
-            <span class="chip-swatch" id="extBrightSwatch"></span>
-            <span class="chip-meta"><em>最亮 10%</em><b id="extBrightHex">—</b></span>
-          </div>
-          <div class="chip">
-            <span class="chip-swatch" id="extDarkSwatch"></span>
-            <span class="chip-meta"><em>最暗 10%</em><b id="extDarkHex">—</b></span>
-          </div>
-        </div>
-        <p class="region-note" id="regionNote" hidden></p>
+        <p id="moodRead" class="mood-read" hidden></p>
       </div>
 
-      <!-- 背景分析 -->
-      <div class="panel-block">
-        <div class="panel-head"><h2>背景分析</h2><span class="panel-count" id="analysisSize">—</span></div>
-        <div class="dom-colors" id="domColors"></div>
-        <div class="dom-detail mono" id="domDetail"></div>
-        <div class="lum-bar" id="lumBar" aria-hidden="true">
-          <span class="seg seg-hi"></span><span class="seg seg-mid"></span><span class="seg seg-sh"></span>
-        </div>
-        <div class="lum-legend">
-          <span>高光 <b id="hiPct">—</b></span><span>中间调 <b id="midPct">—</b></span><span>阴影 <b id="shPct">—</b></span>
-        </div>
-        <div class="mini-stats">
-          <div class="mini-stat"><em>冷暖</em><b id="warmTag">—</b></div>
-          <div class="mini-stat"><em>画面复杂度</em><b id="complexTag">—</b></div>
-          <div class="mini-stat"><em>整体明度</em><b id="lumTag">—</b></div>
-        </div>
+      <div class="panel panel-action">
+        <button id="generateBtn" class="btn-primary" type="button">生成配色</button>
+        <p id="staleHint" class="stale-hint" hidden></p>
       </div>
 
-      <!-- 原色驱动调整器 -->
-      <div class="panel-block">
-        <div class="panel-head">
-          <h2>原色驱动调整器</h2>
-          <span class="panel-note">保留色相 · 增强亮度与色度</span>
+      <div class="panel" id="resultPanel" hidden>
+        <div class="p-head">
+          <span class="p-label">配色方案</span>
+          <span id="bgTypeBadge" class="badge"></span>
         </div>
-
-        <div class="src-color" id="srcColorBlock">
-          <span class="src-chip" id="srcChip"></span>
-          <div class="src-meta">
-            <strong id="srcHex">—</strong>
-            <span class="src-hsl mono" id="srcHsl">—</span>
-          </div>
-          <button class="btn btn-soft src-pick" id="srcPickBtn" type="button" title="从图片重新吸取颜色">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
-            从图片吸色
-          </button>
-        </div>
-
-        <div class="enhance-grid">
-          <div class="enhance-field">
-            <span class="enhance-label">明度 L <em id="valL">0%</em></span>
-            <input type="range" id="enhanceL" min="-30" max="30" value="0" />
-          </div>
-          <div class="enhance-field">
-            <span class="enhance-label">色度 C <em id="valC">0%</em></span>
-            <input type="range" id="enhanceC" min="-30" max="30" value="0" />
-          </div>
-        </div>
-
-        <div class="variant-row" id="variantRow"></div>
-        <button class="btn btn-soft reset-source" id="resetSourceBtn" type="button">恢复原始色</button>
+        <div id="bgSummary" class="bg-summary"></div>
+        <div id="schemeList" class="scheme-list"></div>
       </div>
 
-      <!-- 三套方案 -->
-      <div class="panel-block">
-        <div class="panel-head">
-          <h2>文字配色方案</h2>
-          <span class="panel-count" id="schemeCount">—</span>
-        </div>
-        <div class="scheme-tabs" id="schemeTabs" role="tablist">
-          <button class="stab is-active" data-s="0" type="button"><b>① 背景协调色</b><span>与画面同一气质</span></button>
-          <button class="stab" data-s="1" type="button"><b>② 高对比文字色</b><span>标题到正文成套</span></button>
-          <button class="stab" data-s="2" type="button"><b>③ 氛围艺术色</b><span>海报 · 封面</span></button>
-        </div>
-        <p class="scheme-desc" id="schemeDesc"></p>
-        <div class="scheme-colors" id="schemeColors">
-          <div class="palette-empty">
-            <span class="palette-empty-mark" aria-hidden="true"></span>
-            <p>载入图片后，这里会给出三套可直接用于排版的文字配色。</p>
+      <!-- 高级区（折叠）：保留原有排版调整 / 原色驱动增强 / 导出能力 -->
+      <details class="adv" id="advPanel" hidden>
+        <summary>高级：排版 · 取色增强 · 导出</summary>
+        <div class="adv-body">
+          <div class="grid2">
+            <label class="f-row">字号<input id="sizeRange" type="range" min="18" max="88" value="40" /><output id="sizeVal">40</output></label>
+            <label class="f-row">文字框宽<input id="widthRange" type="range" min="24" max="92" value="62" /><output id="widthVal">62%</output></label>
+            <label class="f-row">行高<input id="lhRange" type="range" min="90" max="200" value="135" /><output id="lhVal">1.35</output></label>
+            <label class="f-row">字距<input id="lsRange" type="range" min="-5" max="30" value="2" /><output id="lsVal">0.02em</output></label>
+          </div>
+          <div class="grid2">
+            <label class="f-row">字重
+              <select id="weightSelect"><option value="400">常规</option><option value="600">半粗</option><option value="700" selected>粗体</option><option value="900">特粗</option></select>
+            </label>
+            <label class="f-row">对齐
+              <select id="alignSelect"><option value="left" selected>左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <button id="strokeToggle" class="toggle" type="button" role="switch" aria-checked="true">描边</button>
+            <button id="shadowToggle" class="toggle" type="button" role="switch" aria-checked="true">阴影</button>
+            <button id="scrimToggle" class="toggle" type="button" role="switch" aria-checked="false">文字底衬</button>
+            <button id="resetBtn" class="btn btn-ghost" type="button">恢复默认排版</button>
+          </div>
+
+          <div class="adv-sep"></div>
+          <p class="p-sub">原色驱动增强（手动）</p>
+          <div class="src-row">
+            <span id="srcChip" class="chip-swatch"></span>
+            <div class="src-meta"><span id="srcHex" class="mono">—</span><span id="srcHsl" class="meta"></span></div>
+            <button id="srcPickBtn" class="btn btn-ghost" type="button">吸色</button>
+            <button id="resetSourceBtn" class="btn btn-ghost" type="button">用主色</button>
+          </div>
+          <div class="grid2">
+            <label class="f-row">明度 ΔL<input id="enhanceL" type="range" min="-30" max="30" value="0" /><output id="valL">0%</output></label>
+            <label class="f-row">色度 ΔC<input id="enhanceC" type="range" min="-30" max="30" value="0" /><output id="valC">0%</output></label>
+          </div>
+          <div id="variantRow" class="variant-row"></div>
+
+          <div class="adv-sep"></div>
+          <div class="export-row">
+            <button id="copyHexBtn" class="btn btn-soft" type="button" disabled>复制色值</button>
+            <button id="copyCssBtn" class="btn btn-soft" type="button" disabled>复制 CSS 变量</button>
+            <button id="pngBtn" class="btn btn-soft" type="button" disabled>色卡 PNG</button>
+            <button id="jsonBtn" class="btn btn-soft" type="button" disabled>分析 JSON</button>
           </div>
         </div>
-      </div>
+      </details>
 
-      <!-- 导出 -->
-      <div class="panel-block">
-        <div class="panel-head"><h2>导出当前方案</h2></div>
-        <div class="export-grid">
-          <button class="btn btn-soft" id="copyHexBtn" type="button" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-            复制全部 HEX
-          </button>
-          <button class="btn btn-soft" id="copyCssBtn" type="button" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-            复制 CSS 变量
-          </button>
-          <button class="btn btn-soft" id="pngBtn" type="button" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            下载色卡 PNG
-          </button>
-          <button class="btn btn-soft" id="jsonBtn" type="button" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            下载分析 JSON
-          </button>
-        </div>
-      </div>
-    </aside>
+      <p class="foot-note">对比度参考 WCAG 2.2 AA：正文 ≥ 4.5:1，大字 ≥ 3:1。所有分析在浏览器本地完成。</p>
+    </section>
   </main>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="color-core.js"></script>
+  <script src="mood-core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
