@@ -597,7 +597,8 @@
   /* ---------- 候选生成 ----------
      来源：背景主色 / 辅助色明度变体、邻近、互补、分裂互补、
            中性色、低饱和强调色，以及画面原色。 */
-  function pickCandidates(bgRgb, region, palRgbs) {
+  function pickCandidates(bgRgb, region, palRgbs, opts) {
+    opts = opts || {};
     const out = [];
     const seen = [];
     const push = (rgb, kind, source) => {
@@ -616,7 +617,7 @@
        方向对不对由评分系统决定（ROLE_MIN 硬线 + 可读性权重）。
        这样原色本身在端点（极亮/极深）时，变体仍能跨越到对端。 */
     (palRgbs || []).forEach((rgb, i) => {
-      generateVariants(rgb).forEach((v) => push(v.rgb, 'bg-src-' + v.key, i + ':source'));
+      generateVariants(rgb, opts).forEach((v) => push(v.rgb, 'bg-src-' + v.key, i + ':source'));
       push(rgb, 'bg-src', i + ':source');
     });
     /* ② 旧方向推导保留为「对比补充色」——当原图颜色太单一/太靠近背景时兜底 */
@@ -738,26 +739,29 @@
   const isUsed = (used, rgb) => used.some((u) => distLab(u, rgb) < DISTINCT_SQ);
 
   /* 方案一：背景协调色 —— 画面取色 → 整组调和到区域可读 */
-  function schemeHarmony(paletteEntries, region) {
-    const s = schemeBase('harmony', '背景协调色', '与画面同一气质',
-      '从画面主色与辅助色出发，保持色相与冷暖关系，只把明度与饱和调到「能被读到」的区间。');
+  function schemeHarmony(paletteEntries, region, bgType, enhanceOpts) {
+    const tag = bgType && bgType.label ? (bgType.label + ' · 克制协调') : '与画面同一气质';
+    const desc = '从画面主色与辅助色出发，保持色相与冷暖关系，只把明度与饱和调到「能被读到」的区间。';
+    const s = schemeBase('harmony', '背景协调色', tag, desc);
     const rgbs = [];
     const add = (rgb) => { if (rgb && rgb.length === 3 && !isUsed(rgbs, rgb)) rgbs.push(rgb); };
     paletteEntries.slice(0, 8).forEach((e) => add(e.rgb));
-    /* 画面取色不足 5 个（柔和渐变等低复杂度图常见）时，从主色派生变体补足成套 */
+    /* 画面取色不足 5 个时，从主色派生变体补足成套（受 satMax 约束） */
     for (const e of paletteEntries.slice(0, 3)) {
       if (rgbs.length >= 8) break;
       const { h, s: ss, l } = rgbToHsl(e.rgb);
-      add(hslToRgb(h, ss, clamp(l + 22, 8, 92)));
-      add(hslToRgb(h, ss, clamp(l - 24, 8, 92)));
-      add(hslToRgb((h + 30) % 360, ss, l));
-      add(hslToRgb((h + 180) % 360, ss, l));
+      const sat = Math.min(ss, (enhanceOpts && enhanceOpts.satMax) || 100);
+      add(hslToRgb(h, sat, clamp(l + 22, 8, 92)));
+      add(hslToRgb(h, sat, clamp(l - 24, 8, 92)));
+      add(hslToRgb((h + 30) % 360, sat, l));
+      add(hslToRgb((h + 180) % 360, sat, l));
     }
     const finals = harmonizePalette(rgbs.slice(0, 8), region.meanRgb, 4.5);
     const kinds = ['bg', 'bg-src', 'analogous', 'complement', 'bg', 'analogous2', 'split', 'bg'];
     s.colors = finals.map((rgb, i) => {
       const ev = evaluateOnRegion(rgb, region);
       const c = colorEntry(rgb, kinds[i] || 'bg', ev, region);
+      if (bgType && bgType.mode === 'B') c.kind = 'design';
       c.use = '';
       return c;
     });
@@ -766,11 +770,12 @@
   }
 
   /* 方案二：高对比文字色 —— 六个角色成套，逐级拉开层次 */
-  function schemeRoles(paletteEntries, region) {
-    const s = schemeBase('roles', '高对比文字色', '标题到正文的成套系统',
-      '按主标题 → 副标题 → 正文 → 辅助信息成套设计：同一色系、逐级拉开明度层次，强调与装饰负责点睛。');
+  function schemeRoles(paletteEntries, region, bgType, enhanceOpts) {
+    const tag = bgType && bgType.label ? (bgType.label + ' · 清晰专业') : '标题到正文的成套系统';
+    const desc = '按主标题 → 副标题 → 正文 → 辅助信息成套设计：同一色系、逐级拉开明度层次，强调与装饰负责点睛。';
+    const s = schemeBase('roles', '高对比文字色', tag, desc);
     const bgRgb = region.meanRgb;
-    const cands = pickCandidates(bgRgb, region, paletteEntries.slice(0, 4).map((e) => e.rgb));
+    const cands = pickCandidates(bgRgb, region, paletteEntries.slice(0, 4).map((e) => e.rgb), enhanceOpts);
     const used = [];
     const order = ['正文', '辅助信息', '主标题', '副标题', '强调', '装饰'];
     for (const use of order) {
@@ -860,12 +865,120 @@
     }
   }
 
+  /* ---------- 背景风格识别与自适应配色 ---------- */
+
+  /* classifyBg：根据调色板与全图分析判断背景类型
+     返回 { type, label, mode: 'A'|'B', satStrategy, hint } */
+  function classifyBg(paletteEntries, global) {
+    if (!global) return { type: 'normal', label: '通用背景', mode: 'A', satStrategy: 'standard', hint: '' };
+
+    const meanLum = relLum(global.meanRgb);
+    const complexity = global.complexity || 0;
+
+    /* 调色板饱和度与 OKLCH 色度统计 */
+    let satSum = 0, chromaSum = 0, maxChroma = 0, count = 0;
+    for (const e of (paletteEntries || [])) {
+      const hsl = rgbToHsl(e.rgb);
+      satSum += hsl.s;
+      const [, c] = oklabToOklch(rgbToOklab(e.rgb));
+      chromaSum += c;
+      if (c > maxChroma) maxChroma = c;
+      count++;
+    }
+    const satMean = count ? satSum / count : 0;
+    const avgChroma = count ? chromaSum / count : 0;
+
+    /* 纯白背景：大面积近白、几乎无彩色像素 */
+    if (meanLum > 0.88 && satMean < 8 && avgChroma < 0.02) {
+      return { type: 'pure-white', label: '纯白背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式' };
+    }
+    /* 纯黑背景：大面积近黑、几乎无彩色像素 */
+    if (meanLum < 0.08 && satMean < 8 && avgChroma < 0.02) {
+      return { type: 'pure-black', label: '纯黑背景 · 主动设计模式', mode: 'B', satStrategy: 'design', hint: '原图几乎无彩色，进入主动设计模式' };
+    }
+    /* 极浅低饱和 */
+    if (meanLum > 0.65 && satMean < 25) {
+      return { type: 'very-light-low-sat', label: '极浅低饱和背景', mode: 'A', satStrategy: 'low-to-mid', hint: '保持克制，生成低至中等饱和度配色' };
+    }
+    /* 深色低饱和 */
+    if (meanLum < 0.18 && satMean < 25) {
+      return { type: 'dark-low-sat', label: '深色低饱和背景', mode: 'A', satStrategy: 'low-to-mid', hint: '保持克制，生成低至中等饱和度配色' };
+    }
+    /* 低饱和摄影 / 柔和插画 */
+    if (satMean < 30 && complexity > 0.12) {
+      return { type: 'low-sat-photo', label: '低饱和度摄影 / 柔和插画', mode: 'A', satStrategy: 'preserve', hint: '保留原图气质，适度提亮不增艳' };
+    }
+    /* 高饱和度、色彩丰富 */
+    if (satMean > 50 || maxChroma > 0.18) {
+      return { type: 'high-sat', label: '高饱和度背景', mode: 'A', satStrategy: 'reduce', hint: '降低候选色度，优先中性色平衡' };
+    }
+    return { type: 'normal', label: '通用背景', mode: 'A', satStrategy: 'standard', hint: '' };
+  }
+
+  /* adaptiveEnhanceParams：根据背景类型返回增强幅度缩放与饱和度上限 */
+  function adaptiveEnhanceParams(bgType) {
+    const map = {
+      'pure-white':         { dLScale: 1.0, dCScale: 0.35, satMax: 38 },
+      'pure-black':         { dLScale: 1.0, dCScale: 0.35, satMax: 38 },
+      'very-light-low-sat': { dLScale: 1.0, dCScale: 0.55, satMax: 48 },
+      'dark-low-sat':       { dLScale: 1.0, dCScale: 0.55, satMax: 48 },
+      'low-sat-photo':      { dLScale: 1.0, dCScale: 0.70, satMax: 55 },
+      'high-sat':           { dLScale: 0.9, dCScale: 0.40, satMax: 52 },
+      'normal':             { dLScale: 1.0, dCScale: 1.00, satMax: 72 },
+    };
+    return map[bgType] || map['normal'];
+  }
+
+  /* DESIGN_PALETTES：纯白/纯黑背景的预定义专业配色关系（source='design'） */
+  const DESIGN_PALETTES = {
+    'pure-white': [
+      [42, 55, 71, '主标题', '深灰蓝'],
+      [90, 105, 125, '副标题', '雾蓝'],
+      [55, 68, 82, '正文', '深青灰'],
+      [120, 130, 145, '辅助信息', '银灰蓝'],
+      [130, 70, 55, '强调', '柔和砖红'],
+      [100, 115, 85, '次级强调', '鼠尾草绿'],
+      [210, 215, 225, '背景辅助', '浅雾灰'],
+    ],
+    'pure-black': [
+      [232, 230, 222, '主标题', '暖白'],
+      [200, 205, 215, '副标题', '银灰'],
+      [218, 216, 210, '正文', '柔白'],
+      [160, 170, 185, '辅助信息', '冰蓝灰'],
+      [180, 155, 90, '强调', '暖金'],
+      [140, 180, 175, '次级强调', '低饱和薄荷'],
+      [50, 56, 68, '背景辅助', '深炭灰'],
+    ],
+  };
+
+  /* designPalette：为纯白/纯黑背景生成设计补色条目 */
+  function designPalette(bgType) {
+    const defs = DESIGN_PALETTES[bgType];
+    if (!defs) return [];
+    return defs.map(([r, g, b, role, name]) => {
+      const rgb = [r, g, b];
+      return { rgb, hex: rgbToHex(rgb), hsl: rgbToHsl(rgb), kind: 'design', source: 'design', use: role, name };
+    });
+  }
+
   /* ---------- 总入口：三套方案 ---------- */
-  function buildSchemes(paletteEntries, region, global) {
+  function buildSchemes(paletteEntries, region, global, opts) {
+    opts = opts || {};
+    const bgType = opts.bgType || classifyBg(paletteEntries, global);
+    const params = adaptiveEnhanceParams(bgType.type);
+    const enhanceOpts = { dLScale: params.dLScale, dCScale: params.dCScale, satMax: params.satMax };
+
+    /* 模式 B：主动设计 —— 用设计补色替代原色 */
+    let effectivePalette = paletteEntries;
+    if (bgType.mode === 'B') {
+      const designColors = designPalette(bgType.type);
+      if (designColors.length) effectivePalette = designColors;
+    }
+
     return [
-      schemeHarmony(paletteEntries, region),
-      schemeRoles(paletteEntries, region),
-      schemeArt(paletteEntries, region, global),
+      schemeHarmony(effectivePalette, region, bgType, enhanceOpts),
+      schemeRoles(effectivePalette, region, bgType, enhanceOpts),
+      schemeArt(effectivePalette, region, global, bgType, enhanceOpts),
     ];
   }
 
